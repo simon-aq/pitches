@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Motorenn Data Platform</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="robots" content="noindex">
+<meta name="description" content="How I rebuilt the data platform behind Motorenn's pricing dashboard: 1.5 billion legacy price rows, an hourly pipeline, five sources.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: an engineer's write-up. One reading column; screenshots and the two scroll stories break out to full width. */
+:root {
+  --bg: #ffffff;
+  --ink: #111214;
+  --soft: #4a4f55;
+  --faint: #8a9097;
+  --line: #e4e6e8;
+  --wash: #f5f6f7;
+  --s-cg: #2a78d6;
+  --s-cc: #eb6834;
+  --s-at: #1baf7a;
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1012; --ink: #ececed; --soft: #b0b4b9; --faint: #7d838a; --line: #26282c; --wash: #17191c;
+    --s-cg: #3987e5; --s-cc: #d95926; --s-at: #199e70;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1012; --ink: #ececed; --soft: #b0b4b9; --faint: #7d838a; --line: #26282c; --wash: #17191c;
+  --s-cg: #3987e5; --s-cc: #d95926; --s-at: #199e70;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--ink);
+  font: 17px/1.65 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  padding-block: 0;
+}
+.col { max-width: 660px; margin-inline: auto; }
+.wide { max-width: 1240px; margin-inline: auto; }
+h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 600; letter-spacing: -0.015em; }
+h1 { font-size: clamp(30px, 4vw, 42px); line-height: 1.15; letter-spacing: -0.025em; }
+h2 { font-size: 24px; line-height: 1.25; margin: 0 0 14px; }
+h3 { font-size: 17px; line-height: 1.4; margin: 0 0 4px; }
+p { margin: 0 0 18px; color: var(--soft); }
+p strong, li strong { color: var(--ink); font-weight: 600; }
+a { color: var(--ink); text-underline-offset: 3px; text-decoration-color: var(--faint); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+code { font: 0.86em var(--mono); color: var(--ink); }
+.num { font-variant-numeric: tabular-nums; }
+section { padding-block: 56px 8px; }
+
+nav { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding-block: 28px; font-size: 15px; }
+nav b { font-weight: 600; }
+nav a { color: var(--soft); }
+
+header.intro { padding-block: 48px 36px; }
+.intro p.lede { font-size: 19px; color: var(--ink); margin-top: 18px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14px; color: var(--faint); margin-top: 6px; }
+
+.shot { margin: 0; }
+.shot .pic { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--wash); }
+.shot img, .shot video { display: block; width: 100%; height: auto; max-width: 100%; }
+.shot figcaption { font-size: 14px; color: var(--faint); margin-top: 10px; max-width: 660px; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 28px; }
+
+/* Scroll stories */
+.story { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 48px; align-items: start; margin-top: 28px; }
+.steps { display: grid; }
+.step { padding-block: 24vh; opacity: .38; transition: opacity .35s; }
+.step:first-child { padding-top: 6vh; }
+.step:last-child { padding-bottom: 34vh; }
+.step.on { opacity: 1; }
+.no-io .step { opacity: 1; }
+.step p { font-size: 16px; margin: 0; }
+.step .k { font: 13px var(--mono); color: var(--faint); margin-bottom: 6px; }
+.stick { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8vh); }
+.screens { position: relative; aspect-ratio: 16 / 10; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #eef2f6; }
+.screens img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; opacity: 0; transition: opacity .5s ease; }
+.screens img.on { opacity: 1; }
+
+figure.car { margin: 0; border: 1px solid var(--line); border-radius: 10px; padding: 20px 20px 14px; background: var(--bg); }
+.car-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; align-items: baseline; }
+.car-head b { font-weight: 600; }
+.car-head span { font: 13px var(--mono); color: var(--faint); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 10px 0 2px; font-size: 13px; color: var(--soft); }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.chart-wrap { position: relative; }
+svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { font-family: var(--sans); font-size: 12px; fill: var(--faint); }
+.chart .grid { stroke: var(--line); }
+.chart .band { fill: var(--ink); fill-opacity: 0.045; }
+.chart .model { stroke: var(--ink); stroke-width: 1.25; stroke-dasharray: 4 4; fill: none; }
+.chart .exit { stroke: var(--ink); stroke-width: 1.25; fill: none; }
+.chart .ink { fill: var(--ink); }
+.chart .first-ring { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.chart .layer { transition: opacity .5s; }
+.chart .line { stroke-dasharray: 1; stroke-dashoffset: 0; transition: stroke-dashoffset 1.6s ease; }
+.chart .dot { transition: opacity .5s; }
+figure[data-step="1"] .l-steps .line { stroke-dashoffset: 1; }
+figure[data-step="1"] .l-steps .dot:not(.first) { opacity: 0; }
+figure[data-step="1"] .l-sessions, figure[data-step="2"] .l-sessions { opacity: 0; }
+figure[data-step="1"] .l-model, figure[data-step="2"] .l-model, figure[data-step="3"] .l-model { opacity: 0; }
+figure[data-step="1"] .l-exit, figure[data-step="2"] .l-exit, figure[data-step="3"] .l-exit, figure[data-step="4"] .l-exit { opacity: 0; }
+figure[data-step]:not([data-step="1"]) .l-first { opacity: 0; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12px; padding: 5px 8px; border-radius: 4px; white-space: nowrap; transform: translate(-50%, calc(-100% - 12px)); }
+details { margin-top: 10px; font-size: 14px; }
+summary { cursor: pointer; color: var(--soft); }
+.table-scroll { overflow: auto; max-height: 240px; margin-top: 8px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { text-align: left; padding: 7px 14px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--faint); }
+td.r, th.r { text-align: right; }
+td:first-child { color: var(--ink); white-space: nowrap; }
+td { color: var(--soft); }
+
+.diagram { overflow-x: auto; margin-top: 24px; }
+.diagram svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.diagram .box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+.diagram .box.key { stroke: var(--ink); }
+.diagram .t1 { font: 600 15px var(--sans); fill: var(--ink); }
+.diagram .t2 { font: 12.5px var(--sans); fill: var(--faint); }
+.diagram .wire { stroke: var(--faint); stroke-width: 1.25; fill: none; }
+.diagram .dash { stroke: var(--faint); stroke-width: 1.25; stroke-dasharray: 3 4; fill: none; }
+.diagram .head { fill: var(--faint); }
+
+.decisions { display: grid; gap: 26px; margin-top: 8px; }
+.decisions p { margin: 0; }
+
+footer { margin-top: 72px; border-top: 1px solid var(--line); padding-block: 28px 64px; display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: 15px; color: var(--soft); }
+footer b { color: var(--ink); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .story { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .story .stick { order: -1; top: env(safe-area-inset-top, 0px); z-index: 2; padding-block: 10px; background: var(--bg); }
+  .step { padding-block: 30vh; }
+  .step:first-child { padding-top: 4vh; }
+  .legend, details { display: none; }
+  .pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .screens img, .chart .line, .chart .layer, .chart .dot, .step { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<nav class="wide"><b>Simón Araque</b><a href="#contact">Contact</a></nav>
+
+<header class="intro col">
+  <h1>Rebuilding the data platform behind Motorenn's pricing dashboard</h1>
+  <p class="lede">Motorenn sells luxury and exotic cars in the US. Its team prices cars with a private dashboard built on market data from five listing and auction sites. I built that platform: the warehouse, the hourly pipeline, the API and the dashboard.</p>
+  <div class="meta"><span>Sole data engineer, end to end</span><span>PostgreSQL · Python · FastAPI · React</span></div>
+</header>
+
+<div class="wide">
+  <figure class="shot">
+    <div class="pic">
+      <video autoplay muted loop playsinline preload="metadata" poster="assets/walkthrough-poster.jpg" width="1440" height="900" aria-label="Screen recording: searching Porsche 911, 2020 to 2024, then scrolling through the dashboard's charts.">
+        <source src="assets/walkthrough.mp4" type="video/mp4">
+      </video>
+    </div>
+    <figcaption>The production dashboard, searching the Porsche 911 from 2020 to 2024. Recorded October 2026.</figcaption>
+  </figure>
+</div>
+
+<section class="col">
+  <h2>Where it started</h2>
+  <p>A legacy scraper (Node.js, MySQL 8.0) wrote every price it saw into two tables. One of them, <code>scraped_prices</code>, held <strong>1.514 billion rows and 357 GB</strong>. There was no analytical layer on top, and the few charts that existed grouped by a column with no index, so they were slow.</p>
+  <p>Three things shaped every decision after that. The scraper could not stop, so I built next to it while it kept writing. The source was read-only for me, and adding an index to a 357 GB live table was not an option, so every read had to go through the primary key. And the first pipeline ran on a 4 GB server, so memory mattered as much as speed.</p>
+</section>
+
+<div class="wide">
+  <div class="pair">
+    <figure class="shot"><div class="pic"><img src="assets/motorenn-com.webp" alt="Motorenn's public website" width="2400" height="1500" loading="lazy"></div><figcaption>motorenn.com, the public site.</figcaption></figure>
+    <figure class="shot"><div class="pic"><img src="assets/top.webp" alt="The pricing dashboard with Porsche 911 selected and listings plotted by mileage" width="2400" height="1500" loading="lazy"></div><figcaption>The pricing dashboard behind it. This, and everything under it, is what I built.</figcaption></figure>
+  </div>
+</div>
+
+<section class="wide">
+  <div class="col" style="margin-inline: 0">
+    <h2>What the dashboard answers</h2>
+    <p>Each chart answers one question a buyer or seller asks about a model. Real screens from production, Porsche 911, VINs masked.</p>
+  </div>
+  <div class="story" id="dash">
+    <div class="steps">
+      <div class="step" data-shot="0"><h3>What is out there?</h3><p>Pick a source, make, model and years. Every active listing and every recent sale is plotted against mileage.</p></div>
+      <div class="step" data-shot="1"><h3>Where is the price going?</h3><p>Asking and sold trends over time, normalized to 10,000 miles so cars with different mileage compare fairly.</p></div>
+      <div class="step" data-shot="2"><h3>How fast does it sell?</h3><p>Days of supply each week: active inventory against the recent pace of sales. When it rises, buyers have room to negotiate.</p></div>
+      <div class="step" data-shot="3"><h3>Do price and supply move together?</h3><p>Each point is one week's change in price against its change in supply, connected in order.</p></div>
+      <div class="step" data-shot="4"><h3>How much does mileage explain?</h3><p>Linear, log and exponential fits of price against mileage, each with its R², so nobody has to trust a single line.</p></div>
+      <div class="step" data-shot="5"><h3>Did it sell above or below the market?</h3><p>Every sold car against the weekly price model, and how long it sat at its final price.</p></div>
+      <div class="step" data-shot="6"><h3>Which cars, exactly?</h3><p>The table behind the charts. A relisted car groups its listings under one VIN instead of counting twice.</p></div>
+    </div>
+    <div class="stick">
+      <div class="screens" id="screens">
+        <img class="on" src="assets/top.webp" alt="Filters with Porsche 911 selected; active and sold listings by mileage" width="2400" height="1500">
+        <img src="assets/ts.webp" alt="Asking and sold price over time" width="2400" height="1500" loading="lazy">
+        <img src="assets/supply.webp" alt="Mileage-normalized price trend and days of supply by week" width="2400" height="1500" loading="lazy">
+        <img src="assets/weekly.webp" alt="Week-over-week price change against supply change" width="2400" height="1500" loading="lazy">
+        <img src="assets/regression.webp" alt="Price against mileage with linear, log and exponential fits" width="2400" height="1500" loading="lazy">
+        <img src="assets/poe.webp" alt="Sold cars: price against the model versus days at final price" width="2400" height="1500" loading="lazy">
+        <img src="assets/table.webp" alt="Listing table with masked VINs" width="2400" height="1500" loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wide">
+  <div class="col" style="margin-inline: 0">
+    <h2>Following one car through the warehouse</h2>
+    <p>A real 2024 Porsche 911 GT3, with its real prices.</p>
+  </div>
+  <div class="story">
+    <div class="steps" id="carSteps">
+      <div class="step" data-step="1"><div class="k">Jun 29, 2024</div><p>Listed on CarGurus at $266,365. The pipeline records its price every time it sees the car.</p></div>
+      <div class="step" data-step="2"><div class="k">294 sightings</div><p>Each sighting is a row in <code>price_observations</code>, which holds 1.62 billion rows today. For pricing, what matters is when the price moved: 25 times for this car.</p></div>
+      <div class="step" data-step="3"><div class="k">2024 to 2026</div><p>It left in July 2024, came back in October 2025, and again in January 2026, when it also showed up on Cars.com and AutoTrader. Each listing period is keyed on VIN, source and event number, so a relist becomes a new event rather than a price glitch.</p></div>
+      <div class="step" data-step="4"><div class="k">Aug 17, 2026</div><p>Every week the pipeline fits a price model per car model and year. It estimated this car at $273,493.</p></div>
+      <div class="step" data-step="5"><div class="k">Aug 22, 2026</div><p>It disappeared from every source at $275,000, 0.5% above the model. The dashboard infers a sale from that, so I measure how often the inference is wrong: in an August audit, 5% of "sold" cars were still listed. I checked this one directly, and the listing has been removed.</p></div>
+    </div>
+    <div class="stick">
+      <figure class="car" id="car">
+        <div class="car-head"><b>2024 Porsche 911 GT3 Coupe</b><span>WP0AC2A99RS26••••</span></div>
+        <div class="legend" aria-hidden="true">
+          <span><i style="background: var(--s-cg)"></i>CarGurus</span>
+          <span><i style="background: var(--s-cc)"></i>Cars.com</span>
+          <span><i style="background: var(--s-at)"></i>AutoTrader</span>
+        </div>
+        <div class="chart-wrap">
+          <svg class="chart" id="chart" viewBox="0 0 720 360" role="img" aria-label="Asking price of one 2024 Porsche 911 GT3 from June 2024 to August 2026 across three sources, with the model estimate of $273,493 and the date it left the market."></svg>
+          <div class="tip" id="tip" hidden></div>
+        </div>
+        <details>
+          <summary>Price history as a table</summary>
+          <div class="table-scroll"><table id="ptable"><thead><tr><th>Date</th><th>Source</th><th class="r">Asking price</th></tr></thead><tbody></tbody></table></div>
+        </details>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="wide">
+  <div class="col" style="margin-inline: 0">
+    <h2>How it is built</h2>
+    <p>The legacy CarGurus scraper still writes to MySQL, and an hourly incremental ETL moves only what changed into PostgreSQL. The four newer sources write to the warehouse directly. Everything downstream reads from one place.</p>
+  </div>
+  <div class="diagram">
+    <svg viewBox="0 0 1120 370" role="img" aria-label="Architecture: CarGurus legacy scraper writes to MySQL; an hourly ETL loads PostgreSQL 16; four Python source plugins write to PostgreSQL directly; FastAPI serves the dashboard; Prometheus and Grafana alert to Slack.">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <path class="wire" d="M200,62 H246" marker-end="url(#ah)"/><path class="wire" d="M440,62 H486" marker-end="url(#ah)"/><path class="wire" d="M650,62 H696" marker-end="url(#ah)"/>
+      <path class="wire" d="M200,228 H696" marker-end="url(#ah)"/><path class="wire" d="M910,88 H956" marker-end="url(#ah)"/><path class="wire" d="M1035,116 V156" marker-end="url(#ah)"/>
+      <path class="dash" d="M805,276 V302" marker-end="url(#ah)"/><path class="dash" d="M570,94 V302" marker-end="url(#ah)"/>
+      <rect class="box" x="10" y="30" width="190" height="64" rx="6"/>
+      <text class="t1" x="24" y="57">CarGurus</text><text class="t2" x="24" y="79">legacy Node.js scraper</text>
+      <rect class="box" x="10" y="180" width="190" height="96" rx="6"/>
+      <text class="t1" x="24" y="207">Four newer sources</text><text class="t2" x="24" y="229">Cars.com · AutoTrader</text><text class="t2" x="24" y="247">Bring a Trailer</text><text class="t2" x="24" y="265">Cars &amp; Bids · Python</text>
+      <rect class="box" x="250" y="30" width="190" height="64" rx="6"/>
+      <text class="t1" x="264" y="57">MySQL 8.0</text><text class="t2" x="264" y="79">1.5B rows · read-only</text>
+      <rect class="box" x="490" y="30" width="160" height="64" rx="6"/>
+      <text class="t1" x="504" y="57">Hourly ETL</text><text class="t2" x="504" y="79">incremental · Python</text>
+      <rect class="box key" x="700" y="30" width="210" height="246" rx="6"/>
+      <text class="t1" x="716" y="57">PostgreSQL 16</text>
+      <text class="t2" x="716" y="86">price_observations 1.62B</text>
+      <text class="t2" x="716" y="108">listing_events 73.8M</text>
+      <text class="t2" x="716" y="130">auction_events</text>
+      <text class="t2" x="716" y="166">weekly price models</text>
+      <text class="t2" x="716" y="188">sold-car metrics</text>
+      <text class="t2" x="716" y="224">sold is computed at</text>
+      <text class="t2" x="716" y="242">query time, not stored</text>
+      <rect class="box" x="960" y="60" width="150" height="56" rx="6"/>
+      <text class="t1" x="974" y="94">FastAPI</text>
+      <rect class="box" x="960" y="160" width="150" height="80" rx="6"/>
+      <text class="t1" x="974" y="187">Dashboard</text><text class="t2" x="974" y="208">React · TypeScript</text><text class="t2" x="974" y="226">ApexCharts</text>
+      <rect class="box" x="490" y="306" width="420" height="52" rx="6"/>
+      <text class="t1" x="506" y="337">Prometheus + Grafana</text><text class="t2" x="700" y="337">alerts to Slack, 11 rules</text>
+    </svg>
+  </div>
+</section>
+
+<section class="col">
+  <h2>Decisions that mattered</h2>
+  <div class="decisions">
+    <div><h3>Extracting changed cars: 39 minutes to 15 seconds</h3><p>The listing extraction phase took 39 minutes to pull the changed cars out of a 50-million-row table. I pushed the changed IDs into a temporary table on the MySQL side and joined there, which brought it to 15 seconds. A server-side cursor streams the result so memory stays flat.</p></div>
+    <div><h3>Reading 1.5 billion rows without an index</h3><p>Any filter on the column I needed was a full scan. The ETL walks the table by primary-key ranges in batches and keeps a high-water mark, so each hour reads only what is new.</p></div>
+    <div><h3>The join that ran out of memory</h3><p>A range predicate (<code>BETWEEN</code>) in the price join exhausted the server's memory and hung for twelve hours. Rewriting it as an equality join on VIN, source and event number fixed it.</p></div>
+    <div><h3>Reloads without downtime</h3><p>A full reload builds shadow tables and swaps them in with one transaction, so the dashboard never reads a half-loaded table.</p></div>
+    <div><h3>Checking what the AI writes</h3><p>I build with Claude Code and run a multi-agent code review before merging. One review caught an R² comparison made across two different spaces, a linear fit against a log fit, before it reached the regression chart above. The agents write a lot of the code; the schema, the decisions and the checks stay with me.</p></div>
+  </div>
+</section>
+
+<section class="col">
+  <h2>By the numbers</h2>
+  <p>Read from production on October 27, 2026, unless noted.</p>
+  <div class="table-scroll" style="max-height: none">
+    <table>
+      <tbody>
+        <tr><td class="num">1.62 billion</td><td>rows in <code>price_observations</code>, 250 GB</td></tr>
+        <tr><td class="num">73.8 million</td><td>listing events, 59 GB</td></tr>
+        <tr><td>5</td><td>sources: CarGurus, Cars.com, AutoTrader, Bring a Trailer, Cars &amp; Bids</td></tr>
+        <tr><td class="num">2 min</td><td>median hourly ETL run; heavy price batches take up to 1.5 h (p90 84 min, 131 runs, Oct 20–26)</td></tr>
+        <tr><td>11</td><td>Grafana alert rules routed to Slack</td></tr>
+        <tr><td>5%</td><td>of inferred sales still listed when audited (August 11, 2026)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="col">
+  <h2>What I take from it</h2>
+  <p>Start from what the data can actually support. The source table had no usable index and could not be changed, and that one constraint decided most of the pipeline's design.</p>
+  <p>Measure the parts that are inferred. A car that disappears is not always sold, so the dashboard's "sold" figure comes with a known error rate instead of a guess.</p>
+  <p>Keep one source of truth downstream. Five sources with different shapes land in one warehouse, and every chart reads from there.</p>
+</section>
+
+<footer class="col" id="contact">
+  <b>Simón Araque</b>
+  <a href="mailto:simoncarrero97@gmail.com">simoncarrero97@gmail.com</a>
+  <a href="https://www.linkedin.com/in/araque-simon/">linkedin.com/in/araque-simon</a>
+</footer>
+
+<script>
+(function () {
+  var hasIO = 'IntersectionObserver' in window;
+  if (!hasIO) document.documentElement.classList.add('no-io');
+
+  // Real price changes for one car (prod query, 2026-10-27). Date = first day the new price was seen.
+  var S = { cg: 'CarGurus', cc: 'Cars.com', at: 'AutoTrader' };
+  var pts = [
+    ['2024-06-29', 266365, 'cg', 1], ['2024-07-04', 264000, 'cg', 1], ['2024-07-09', 268992, 'cg', 1], ['2024-07-15', 263764, 'cg', 1],
+    ['2024-07-18', 260487, 'cg', 1], ['2024-07-25', 285135, 'cg', 1],
+    ['2025-10-09', 279990, 'cg', 2], ['2025-10-22', 277990, 'cg', 2], ['2025-10-27', 274990, 'cg', 2], ['2025-11-15', 269990, 'cg', 2],
+    ['2025-11-27', 264990, 'cg', 2], ['2025-12-03', 259990, 'cg', 2],
+    ['2026-01-08', 285000, 'cg', 3], ['2026-02-25', 275000, 'cg', 3], ['2026-02-28', 269900, 'cg', 3], ['2026-03-14', 279000, 'cg', 3],
+    ['2026-03-25', 275000, 'cg', 3], ['2026-05-04', 274900, 'cg', 3], ['2026-05-13', 269990, 'cg', 3], ['2026-06-04', 269500, 'cg', 3],
+    ['2026-08-05', 275000, 'cg', 3],
+    ['2026-05-04', 274900, 'cc', 1], ['2026-05-12', 269990, 'cc', 1],
+    ['2026-06-18', 269500, 'at', 1], ['2026-07-15', 269500, 'at', 2]
+  ];
+  var lastSeen = { cg1: '2024-07-26', cg2: '2025-12-11', cg3: '2026-08-22', cc1: '2026-06-01', at1: '2026-06-18', at2: '2026-07-15' };
+  var MODEL = 273493, EXIT = '2026-08-22';
+  var W = 720, H = 360, m = { l: 60, r: 16, t: 34, b: 34 };
+  var t = function (d) { return Date.parse(d + 'T00:00:00Z'); };
+  var x0 = t('2024-05-15'), x1 = t('2026-09-30'), y0 = 255000, y1 = 290000;
+  var X = function (d) { return m.l + (t(d) - x0) / (x1 - x0) * (W - m.l - m.r); };
+  var Y = function (v) { return m.t + (y1 - v) / (y1 - y0) * (H - m.t - m.b); };
+  var money = function (v) { return '$' + v.toLocaleString('en-US'); };
+  var fmtDate = function (d) { return new Date(t(d)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }); };
+  var col = { cg: 'var(--s-cg)', cc: 'var(--s-cc)', at: 'var(--s-at)' };
+  var svg = document.getElementById('chart'), NS = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs, parent, text) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    (parent || svg).appendChild(e);
+    return e;
+  }
+  var axes = el('g', {});
+  [260000, 270000, 280000, 290000].forEach(function (v) {
+    el('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), 'class': 'grid' }, axes);
+    el('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end' }, axes, '$' + (v / 1000) + 'k');
+  });
+  [['2024-07-01', 'Jul 2024'], ['2025-01-01', 'Jan 2025'], ['2025-07-01', 'Jul 2025'], ['2026-01-01', 'Jan 2026'], ['2026-07-01', 'Jul 2026']].forEach(function (a) {
+    el('text', { x: X(a[0]), y: H - 10, 'text-anchor': 'middle' }, axes, a[1]);
+  });
+  var Ls = el('g', { 'class': 'layer l-sessions' });
+  [['2024-06-29', 'cg1', 'Listing 1'], ['2025-10-09', 'cg2', 'Listing 2'], ['2026-01-08', 'cg3', 'Listing 3']].forEach(function (b) {
+    var xa = X(b[0]), xb = X(lastSeen[b[1]]);
+    el('rect', { x: xa - 3, y: m.t, width: Math.max(xb - xa + 6, 8), height: H - m.t - m.b, 'class': 'band' }, Ls);
+    el('text', { x: xa - 3, y: m.t - 10 }, Ls, b[2]);
+  });
+  var Lm = el('g', { 'class': 'layer l-model' });
+  el('line', { x1: X('2025-09-01'), x2: X(EXIT), y1: Y(MODEL), y2: Y(MODEL), 'class': 'model' }, Lm);
+  el('text', { x: X('2025-09-01'), y: Y(MODEL) - 8, 'class': 'ink' }, Lm, 'Model estimate ' + money(MODEL));
+  var Lp = el('g', { 'class': 'layer l-steps' }), groups = {};
+  pts.forEach(function (p) { var k = p[2] + p[3]; (groups[k] = groups[k] || []).push(p); });
+  Object.keys(groups).forEach(function (k) {
+    var g = groups[k], d = '';
+    g.forEach(function (p, i) {
+      var end = i + 1 < g.length ? g[i + 1][0] : lastSeen[k];
+      d += (i ? ' V' + Y(p[1]) : 'M' + X(p[0]) + ',' + Y(p[1])) + ' H' + X(end);
+    });
+    el('path', { d: d, fill: 'none', stroke: col[g[0][2]], 'stroke-width': 2, pathLength: 1, 'class': 'line' }, Lp);
+  });
+  pts.forEach(function (p, i) {
+    el('circle', { cx: X(p[0]), cy: Y(p[1]), r: 4, fill: col[p[2]], stroke: 'var(--bg)', 'stroke-width': 2, 'class': 'dot' + (i ? '' : ' first') }, Lp);
+  });
+  var Lf = el('g', { 'class': 'layer l-first' });
+  el('circle', { cx: X(pts[0][0]), cy: Y(pts[0][1]), r: 9, 'class': 'first-ring' }, Lf);
+  el('text', { x: X(pts[0][0]) + 14, y: Y(pts[0][1]) + 22, 'class': 'ink' }, Lf, 'First seen ' + money(pts[0][1]));
+  var Le = el('g', { 'class': 'layer l-exit' });
+  el('line', { x1: X(EXIT), x2: X(EXIT), y1: m.t, y2: H - m.b, 'class': 'exit' }, Le);
+  el('text', { x: X(EXIT) - 6, y: m.t - 10, 'text-anchor': 'end', 'class': 'ink' }, Le, 'Gone Aug 22, 2026');
+
+  var tip = document.getElementById('tip');
+  var hit = el('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' });
+  hit.addEventListener('pointermove', function (ev) {
+    var r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) * W / r.width, sy = (ev.clientY - r.top) * H / r.height;
+    var best = null, bd = Infinity;
+    pts.forEach(function (p) { var dx = X(p[0]) - sx, dy = Y(p[1]) - sy, dd = dx * dx + dy * dy * 0.3; if (dd < bd) { bd = dd; best = p; } });
+    tip.textContent = fmtDate(best[0]) + ' · ' + S[best[2]] + ' · ' + money(best[1]);
+    tip.style.left = (X(best[0]) * r.width / W) + 'px';
+    tip.style.top = (Y(best[1]) * r.height / H) + 'px';
+    tip.hidden = false;
+  });
+  hit.addEventListener('pointerleave', function () { tip.hidden = true; });
+  var tb = document.querySelector('#ptable tbody');
+  pts.slice().sort(function (a, b) { return t(a[0]) - t(b[0]); }).forEach(function (p) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + p[0] + '</td><td>' + S[p[2]] + '</td><td class="r">' + money(p[1]) + '</td>';
+    tb.appendChild(tr);
+  });
+
+  if (!hasIO) return;
+  var shots = document.querySelectorAll('#screens img');
+  var dashSteps = document.querySelectorAll('#dash .step');
+  var fig = document.getElementById('car');
+  var carSteps = document.querySelectorAll('#carSteps .step');
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var s = e.target;
+      if (s.dataset.shot != null) {
+        dashSteps.forEach(function (x) { x.classList.toggle('on', x === s); });
+        shots.forEach(function (img, i) { img.classList.toggle('on', i === +s.dataset.shot); });
+      } else {
+        carSteps.forEach(function (x) { x.classList.toggle('on', x === s); });
+        fig.setAttribute('data-step', s.dataset.step);
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  dashSteps.forEach(function (s) { io.observe(s); });
+  carSteps.forEach(function (s) { io.observe(s); });
+  new IntersectionObserver(function (en) {
+    if (!en[0].isIntersecting) { fig.removeAttribute('data-step'); carSteps.forEach(function (s) { s.classList.remove('on'); }); }
+  }).observe(document.getElementById('carSteps').parentNode);
+})();
+</script>
+</body>
+</html>
